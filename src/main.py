@@ -11,8 +11,8 @@ def process_files(reader, folder_path, prefix, read_func):
         # 1. Read and Clean the data into memory
         df = read_func(file_path)
         
-        if df.empty:
-            print("Warning: File is empty. Skipping.")
+        if df is None or df.empty:
+            print(f"⚠️  Skipping {file_path.name}: No data or read error.")
             continue
 
         # 2. Setup Archive Directory
