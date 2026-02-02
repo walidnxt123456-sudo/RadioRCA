@@ -1,5 +1,7 @@
 __pycache__/
 .venv/
 .env
-data/input/
-data/output/
+# Ignore all CSV files in the data directory
+data/**/*.csv
+# But DO NOT ignore the .gitkeep files (this keeps the folders alive)
+!**/.gitkeep
