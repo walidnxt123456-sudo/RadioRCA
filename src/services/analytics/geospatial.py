@@ -1,6 +1,15 @@
 import pandas as pd
 import numpy as np
-from ..rca_utils import get_latest_clean_file
+from ..rca_utils import get_latest_clean_file, fetch_ericsson_e_tilt_group
+
+def calculate_required_tilt(height_m, distance_km):
+    """Calculates the downward angle (tilt) required to reach the user's location."""
+    if distance_km <= 0: return 0
+    # Convert distance to meters
+    distance_m = distance_km * 1000
+    # tan(theta) = Opp / Adj -> Tilt = arctan(HBA / Dist)
+    tilt_rad = np.arctan2(height_m, distance_m)
+    return round(float(np.degrees(tilt_rad)), 1)
 
 def calculate_angle_offset(azimuth, bearing):
     """Calculates the absolute minimum difference between antenna azimuth and user bearing."""
@@ -50,6 +59,10 @@ def analyze(ctx):
     site_col = next((c for c in df.columns if 'site' in c), df.columns[0])
     cell_col = next((c for c in df.columns if 'cell' in c), site_col)
 
+    # Identify Vertical columns independently
+    hba_col = next((c for c in df.columns if any(k in c for k in ['hba', 'height', 'mha'])), None)
+    etilt_col = next((c for c in df.columns if any(k in c for k in ['etilt', 'e-tilt', 'elect_tilt'])), None)
+
     # 2. Calculate Distance for every row
     df['distance_km'] = df.apply(lambda r: haversine(u_lat, u_lon, float(r[lat_col]), float(r[lon_col])), axis=1)
     
@@ -57,15 +70,16 @@ def analyze(ctx):
     unique_nearest_sites = df.sort_values('distance_km')[site_col].unique()[:site_limit]
     
     print(f"\n🌍 User Coordinates: {u_lat}, {u_lon}")
-    print("="*100)
-    print(f"{'SITE ID':<12} | {'CELL NAME':<20} | {'DIST (km)':<10} | {'AZI':<5} | {'BEARING':<8} | {'OFFSET':<8} | {'STATUS'}")
-    print("-" * 100)
+    print("="*130)
+    print(f"{'SITE ID':<12} | {'CELL NAME':<20} | {'DIST (km)':<10} | {'AZI':<5} | {'BEARING':<8} | {'OFFSET':<8} | {'STATUS':<16} | {'REQ TILT':<8} | {'E-TILT':<6} | {'V_STATUS'}")
+    print("-" * 130)
 
     for site in unique_nearest_sites:
         # Get all cells belonging to this site
         site_cells = df[df[site_col] == site].copy()
         
         for _, row in site_cells.iterrows():
+            # --- HORIZONTAL BLOCK (Azimuth) ---
             # 1. Calculate the bearing from Site to User
             angle_to_user = calculate_bearing(row[lat_col], row[lon_col], u_lat, u_lon)
             
@@ -73,7 +87,33 @@ def analyze(ctx):
             azimuth = row[azi_col] if azi_col else None
             offset = calculate_angle_offset(azimuth, angle_to_user)
             
+            # --- VERTICAL BLOCK (Tilt) ---
+            # Extract height and electrical tilt independently
+            hba = float(row[hba_col]) if hba_col and not pd.isna(row[hba_col]) else 30.0
+            
+            cell_name = row[cell_col]
+            site_id = row[site_col]
+            # t.1. Fetch live data from CM
+            e_tilt_group = fetch_ericsson_e_tilt_group(site_id, cell_name)
+            e_tilt = 0.0 # Default fallback
+            if e_tilt_group:
+                e_tilt = e_tilt_group['e_tilt']
+                band_info = e_tilt_group['band_id']
+                
+            # t.2. Calculate Required Tilt
+            req_tilt = calculate_required_tilt(hba, row['distance_km'])
+            tilt_delta = abs(req_tilt - e_tilt) # Use this for future RCA logic
+            # t.3. Determine Vertical Status
+            v_delta = abs(req_tilt - e_tilt)
+            if v_delta <= 3:
+                v_status = "✅ [V-OK]"
+            elif v_delta <= 6:
+                v_status = "⚠️ [EDGE]"
+            else:
+                v_status = "❌ [MISSED]"
+            
             # 3. Enhanced Status Logic
+            # --- STATUS BLOCK (Horizontal logic) ---
             status = "N/A"
             if offset is not None:
                 if offset <= 30:
@@ -86,6 +126,7 @@ def analyze(ctx):
                     status = "❌ [BACK]"
                     
             # 4. Print the Row
+            # --- PRINTING BLOCK --
             off_str = f"{int(offset)}°" if offset is not None else "---"
             print(f"{str(row[site_col]):<12} | "
                   f"{str(row[cell_col]):<20} | "
@@ -93,7 +134,10 @@ def analyze(ctx):
                   f"{int(row[azi_col]) if azi_col else 'N/A':<5} | "
                   f"{int(angle_to_user):>3}°     | "
                   f"{off_str:<8} | "
-                  f"{status}")                  
+                  f"{status:<16}  |"                  
+                  f"{req_tilt:>5}° | "
+                  f"{e_tilt:>4}° | "
+                  f"{v_status}")
                   
         print("-" * 85) # Separator between different sites
 
@@ -116,3 +160,16 @@ def analyze(ctx):
         
         if best_row['offset'] < 25:
             print(f"🎯 Recommended Cell: {best_row[cell_col]} (Offset: {int(best_row['offset'])}°)")
+        
+    # Separate Vertical RCA Insight
+    if hba_col and best_dist < 0.2 and hba > 35:
+        print(f"📉 Vertical RCA: User is in the 'Null' zone. Too close ({best_dist:.2f}km) to a tall tower ({hba}m).")
+    # Final Verdict Logic
+    if offset <= 30 and v_delta <= 3:
+        print("\n🎯 VERDICT: User is in the Sweet Spot (Horizontal & Vertical alignment OK).")
+    elif offset > 30 and v_delta <= 3:
+        print("\n📢 VERDICT: Horizontal Mismatch. Azimuth is the likely Root Cause.")
+    elif offset <= 30 and v_delta > 3:
+        print("\n📉 VERDICT: Vertical Mismatch. Overshooting or Tilt issue is the likely Root Cause.")
+    else:
+        print("\n🚫 VERDICT: Poor Coverage. User is not served by any main beam of this site.")
