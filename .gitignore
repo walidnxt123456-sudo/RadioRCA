@@ -7,3 +7,6 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
+data/rca_history.json
+data/input/*
+data/rca_history.json

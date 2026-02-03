@@ -2,16 +2,30 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Infrastructure & Interfaces
 from infrastructure.csv_reader import CsvReader
 from interfaces.fwa_cli import get_fwa_input
-from services.rca_engine import execute_selected_rca  # Import the new engine
+from services.rca_engine import execute_selected_rca
+from services.rca_utils import save_history, load_history
 
 def process_files(reader, folder_path, prefix, read_func):
-    """Processes files: Archives the original RAW and saves a CLEAN copy."""
-    for file_path in folder_path.glob(f"{prefix}*.csv"):
+    """Processes all files matching the prefix: Archives RAW and saves a CLEAN copy."""
+    # Look for multiple extensions
+    extensions = ['*.csv', '*.xlsx', '*.xls']
+    # FIX: Convert glob to a list so moving files doesn't break the loop
+    files_to_process = []
+    
+    for ext in extensions:
+        files_to_process.extend(list(folder_path.glob(f"{prefix}{ext}")))
+        
+    if not files_to_process:
+        return
+
+    for file_path in files_to_process:
         print(f"\n>>> Processing {prefix.upper()}: {file_path.name}")
         
-        # 1. Read and Clean the data into memory
+        # 1. Read and Clean data
         df = read_func(file_path)
         
         if df is None or df.empty:
@@ -24,31 +38,25 @@ def process_files(reader, folder_path, prefix, read_func):
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # 3. SAVE THE CLEAN VERSION
-        clean_filename = f"clean_{timestamp}_{file_path.name}"
+        # 3. Standardize the output: always save the CLEAN version as a CSV
+        clean_filename = f"clean_{timestamp}_{file_path.name}.csv"
         clean_path = archive_dir / clean_filename
         df.to_csv(clean_path, index=False, sep=',', decimal='.')
         print(f"Clean version saved: {clean_path.name}")
 
-        # 4. MOVE THE ORIGINAL RAW FILE
-        # We use shutil.move so the 'input' folder stays empty
+        # 4. MOVE ORIGINAL RAW (using shutil.move) Archive the original raw file (regardless of whether it was csv or xlsx)
         raw_filename = f"raw_{timestamp}_{file_path.name}"
         raw_path = archive_dir / raw_filename
         shutil.move(str(file_path), str(raw_path))
         print(f"Original RAW archived: {raw_path.name}")
 
-
 def run_fwa_analysis(context):
-    """
-    Evaluates available context and stays in a loop to allow 
-    multiple sequential RCA checks.
-    """
+    """Sub-menu for RCA checks."""
     while True:
         print("\n" + "="*40)
         print("      FWA RCA DIAGNOSTIC ENGINE")
         print("="*40)
         
-        # 1. Determine available paths
         available_rcas = []
         if context.get('latitude') and context.get('longitude'):
             available_rcas.append(("GEO_DIST", "Geospatial Distance to Nearest Site"))
@@ -61,41 +69,34 @@ def run_fwa_analysis(context):
         
         available_rcas.append(("GEN_INT", "General Interference / SNR Analysis"))
 
-        # 2. Present the Menu
         print("\nAvailable Analyses:")
         for i, (code, description) in enumerate(available_rcas, 1):
             print(f"{i}. [{code}] - {description}")
         
-        print(f"{len(available_rcas) + 1}. [BACK] - Return to Main Menu")
+        back_opt = len(available_rcas) + 1
+        print(f"{back_opt}. [BACK] - Return to Main Menu")
         
         choice = input("\nSelect an option: ").strip()
 
-        # Handle "Back" option
-        if choice == str(len(available_rcas) + 1) or choice.lower() == 'b':
-            print("Exiting diagnostic engine...")
+        if choice == str(back_opt) or choice.lower() == 'b':
             break
         
-        # Handle RCA Selection
         if choice.isdigit() and int(choice) <= len(available_rcas):
             selected_code = available_rcas[int(choice)-1][0]
-            # Execute the routed RCA logic
             execute_selected_rca(selected_code, context)
-            
-            # Pause so the user can read the output before the menu redraws
             input("\nPress Enter to continue...")
         else:
-            print("❌ Invalid selection. Try again.")       
-
+            print("❌ Invalid selection.")       
 
 def show_history_menu(history, current_active):
+    """Displays and loads from history."""
     if not history:
         print("\n📜 History is empty.")
         return current_active
 
     print("\n--- RECENT HISTORY (Last 10) ---")
     for i, ctx in enumerate(history, 1):
-        # Display a short summary for each history item
-        summary = f"Lat: {ctx['latitude']}, Lon: {ctx['longitude']}, PCI: {ctx['pci_lte']}"
+        summary = f"Lat: {ctx.get('latitude', 'N/A')}, Lon: {ctx.get('longitude', 'N/A')}, PCI: {ctx.get('pci_lte', 'N/A')}"
         print(f"{i}. {summary}")
 
     print(f"{len(history) + 1}. [BACK]")
@@ -109,12 +110,9 @@ def show_history_menu(history, current_active):
             return history[idx].copy()
             
     return current_active
-    
 
 def main():
-    # Store the last 10 contexts in a list
-    history = []
-    # This is the "active" context we are working on right now
+    history = load_history()
     current_ctx = {
         "longitude": None, "latitude": None, "pci_lte": None, "pci_nr": None,
         "rsrp_lte": None, "rsrq_lte": None, "rsrp_nr": None, "rsrq_nr": None,
@@ -126,11 +124,9 @@ def main():
         print("   RadioRCA - FWA Diagnostic Tool")
         print("="*40)
         
-        # Show a summary of the current data loaded
         lat = current_ctx.get('latitude') or "---"
         lon = current_ctx.get('longitude') or "---"
-        pci = current_ctx.get('pci_lte') or "---"
-        print(f"STATUS: Active Data [Lat: {lat}, Lon: {lon}, PCI: {pci}]")
+        print(f"STATUS: Active Data [Lat: {lat}, Lon: {lon}]")
         print("-" * 40)
         print("1. Process & Clean Network Files")
         print("2. Edit / Load New Data")
@@ -138,20 +134,29 @@ def main():
         print("4. Run RCA Engine")
         print("5. Exit")
         
-        choice = input("\nEnter choice: ").strip()
+        choice = input("\nEnter choice (1-5): ").strip()
         
         if choice == "1":
-            # ... existing process_files code ...
-            pass
+            base_input = Path("data/input")
+            reader = CsvReader()
+            tasks = [
+                (base_input / "pm", "pm_", reader.read_pm_data),
+                (base_input / "cm", "cm_", reader.read_cm_data),
+                (base_input / "database", "database_", reader.read_design_data),
+                (base_input / "rf", "rf_", reader.read_rf_data),
+            ]
+            for folder, prefix, func in tasks:
+                if folder.exists():
+                    process_files(reader, folder, prefix, func)
+                else:
+                    folder.mkdir(parents=True, exist_ok=True)
+            print("\n✅ Processing complete.")
             
         elif choice == "2":
-            # Save the current state to history before editing if it's not empty
             if any(v is not None for v in current_ctx.values()):
-                # Insert at the beginning, keep only last 10
                 history.insert(0, current_ctx.copy())
                 history = history[:10]
-            
-            # Now edit the current context
+                save_history(history)
             current_ctx = get_fwa_input(current_ctx)
             
         elif choice == "3":
@@ -163,7 +168,8 @@ def main():
             else:
                 print("❌ No data loaded. Please use Option 2 first.")
                 
-        elif choice == "5" or choice.lower() == 'q':
+        elif choice == "5" or choice.lower() in ['q', 'exit']:
+            save_history(history)
             sys.exit()
 
 if __name__ == "__main__":
