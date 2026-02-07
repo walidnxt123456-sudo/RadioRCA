@@ -39,10 +39,15 @@ def haversine(lat1, lon1, lat2, lon2):
 def analyze(ctx):
     u_lat, u_lon = ctx.get('latitude'), ctx.get('longitude')
     
-    # 1. Professional Input Request
-    print("\n" + "-"*60)
-    limit_input = input("🔢 Specify the number of nearest SITES to evaluate (default 1): ").strip()
-    site_limit = int(limit_input) if limit_input and limit_input.isdigit() else 1
+    # Identify if we are in CLI or Web mode to handle the 'input'
+    is_web = ctx.get('is_web', False)
+    site_limit = ctx.get('site_limit', 1)
+    
+    if not is_web:
+        # Input Request
+        print("\n" + "-"*60)
+        limit_input = input("🔢 Specify the number of nearest SITES to evaluate (default 1): ").strip()
+        site_limit = int(limit_input) if limit_input and limit_input.isdigit() else 1
 
     file_path = get_latest_clean_file("database", "database_")
     if not file_path: return print("⚠️ Clean database not found.")
@@ -63,17 +68,19 @@ def analyze(ctx):
     hba_col = next((c for c in df.columns if any(k in c for k in ['hba', 'height', 'mha'])), None)
     etilt_col = next((c for c in df.columns if any(k in c for k in ['etilt', 'e-tilt', 'elect_tilt'])), None)
 
-    # 2. Calculate Distance for every row
+    # Calculate Distance for every row
     df['distance_km'] = df.apply(lambda r: haversine(u_lat, u_lon, float(r[lat_col]), float(r[lon_col])), axis=1)
     
-    # 3. Get unique nearest Site IDs
+    # 1. Initialize a Results Structure
+    analysis_results = {
+        "user_coords": [u_lat, u_lon],
+        "cells": [],
+        "verdict": ""
+    }
+    
+    # 2. Main Processing Loop
     unique_nearest_sites = df.sort_values('distance_km')[site_col].unique()[:site_limit]
     
-    print(f"\n🌍 User Coordinates: {u_lat}, {u_lon}")
-    print("="*130)
-    print(f"{'SITE ID':<12} | {'CELL NAME':<20} | {'DIST (km)':<10} | {'AZI':<5} | {'BEARING':<8} | {'OFFSET':<8} | {'STATUS':<16} | {'REQ TILT':<8} | {'E-TILT':<6} | {'V_STATUS'}")
-    print("-" * 130)
-
     for site in unique_nearest_sites:
         # Get all cells belonging to this site
         site_cells = df[df[site_col] == site].copy()
@@ -125,51 +132,72 @@ def analyze(ctx):
                 else:
                     status = "❌ [BACK]"
                     
-            # 4. Print the Row
-            # --- PRINTING BLOCK --
-            off_str = f"{int(offset)}°" if offset is not None else "---"
-            print(f"{str(row[site_col]):<12} | "
-                  f"{str(row[cell_col]):<20} | "
-                  f"{row['distance_km']:<10.2f} | "
-                  f"{int(row[azi_col]) if azi_col else 'N/A':<5} | "
-                  f"{int(angle_to_user):>3}°     | "
-                  f"{off_str:<8} | "
-                  f"{status:<16}  |"                  
-                  f"{req_tilt:>5}° | "
-                  f"{e_tilt:>4}° | "
-                  f"{v_status}")
-                  
-        print("-" * 85) # Separator between different sites
+            # 4. Instead of printing, we APPEND to our list
+            cell_data = {
+                "site_id": str(row[site_col]),
+                "cell_name": str(row[cell_col]),
+                "site_lat": float(row[lat_col]),  # Added for mapping
+                "site_lon": float(row[lon_col]),  # Added for mapping
+                "distance": round(row['distance_km'], 2),
+                "azimuth": int(row[azi_col]) if azi_col else 0,
+                "bearing": int(angle_to_user),
+                "offset": offset,
+                "h_status": status,
+                "req_tilt": req_tilt,
+                "e_tilt": e_tilt,
+                "v_status": v_status
+            }
+            analysis_results["cells"].append(cell_data)
 
-    # RCA Insight
-    best_dist = df['distance_km'].min()
-    if best_dist > 3.5:
-        print(f"💡 RCA Insight: Closest site is {best_dist:.2f}km away. Distance is likely the Root Cause.")
-    else:
-        print(f"✅ RCA Insight: Distance is okay ({best_dist:.2f}km). Check cell azimuths/directivity above.")
-        
-    # Find the best candidate (Closest to 0 degree offset among nearby cells)
-    # We filter for cells within 5km, then sort by offset
-    valid_candidates = df[df['distance_km'] < 2.0].copy()
-    if azi_col and not valid_candidates.empty:
-        valid_candidates['offset'] = valid_candidates.apply(
-            lambda r: calculate_angle_offset(r[azi_col], calculate_bearing(r[lat_col], r[lon_col], u_lat, u_lon)), 
-            axis=1
-        )
-        best_row = valid_candidates.sort_values('offset').iloc[0]
-        
-        if best_row['offset'] < 25:
-            print(f"🎯 Recommended Cell: {best_row[cell_col]} (Offset: {int(best_row['offset'])}°)")
-        
-    # Separate Vertical RCA Insight
-    if hba_col and best_dist < 0.2 and hba > 35:
-        print(f"📉 Vertical RCA: User is in the 'Null' zone. Too close ({best_dist:.2f}km) to a tall tower ({hba}m).")
-    # Final Verdict Logic
-    if offset <= 30 and v_delta <= 3:
-        print("\n🎯 VERDICT: User is in the Sweet Spot (Horizontal & Vertical alignment OK).")
-    elif offset > 30 and v_delta <= 3:
-        print("\n📢 VERDICT: Horizontal Mismatch. Azimuth is the likely Root Cause.")
-    elif offset <= 30 and v_delta > 3:
-        print("\n📉 VERDICT: Vertical Mismatch. Overshooting or Tilt issue is the likely Root Cause.")
-    else:
-        print("\n🚫 VERDICT: Poor Coverage. User is not served by any main beam of this site.")
+            # --- PRINTING BLOCK --
+            if not is_web:
+                off_str = f"{int(offset)}°" if offset is not None else "---"
+                print(f"{str(row[site_col]):<12} | "
+                      f"{str(row[cell_col]):<20} | "
+                      f"{row['distance_km']:<10.2f} | "
+                      f"{int(row[azi_col]) if azi_col else 'N/A':<5} | "
+                      f"{int(angle_to_user):>3}°     | "
+                      f"{off_str:<8} | "
+                      f"{status:<16}  |"                  
+                      f"{req_tilt:>5}° | "
+                      f"{e_tilt:>4}° | "
+                      f"{v_status}")
+                  
+        if not is_web:
+            print("-" * 85) # Separator between different sites
+
+    if not is_web:
+        # RCA Insight
+        best_dist = df['distance_km'].min()
+        if best_dist > 3.5:
+            print(f"💡 RCA Insight: Closest site is {best_dist:.2f}km away. Distance is likely the Root Cause.")
+        else:
+            print(f"✅ RCA Insight: Distance is okay ({best_dist:.2f}km). Check cell azimuths/directivity above.")
+            
+        # Find the best candidate (Closest to 0 degree offset among nearby cells)
+        # We filter for cells within 5km, then sort by offset
+        valid_candidates = df[df['distance_km'] < 2.0].copy()
+        if azi_col and not valid_candidates.empty:
+            valid_candidates['offset'] = valid_candidates.apply(
+                lambda r: calculate_angle_offset(r[azi_col], calculate_bearing(r[lat_col], r[lon_col], u_lat, u_lon)), 
+                axis=1
+            )
+            best_row = valid_candidates.sort_values('offset').iloc[0]
+            
+            if best_row['offset'] < 25:
+                print(f"🎯 Recommended Cell: {best_row[cell_col]} (Offset: {int(best_row['offset'])}°)")
+            
+        # Separate Vertical RCA Insight
+        if hba_col and best_dist < 0.2 and hba > 35:
+            print(f"📉 Vertical RCA: User is in the 'Null' zone. Too close ({best_dist:.2f}km) to a tall tower ({hba}m).")
+        # Final Verdict Logic
+        if offset <= 30 and v_delta <= 3:
+            print("\n🎯 VERDICT: User is in the Sweet Spot (Horizontal & Vertical alignment OK).")
+        elif offset > 30 and v_delta <= 3:
+            print("\n📢 VERDICT: Horizontal Mismatch. Azimuth is the likely Root Cause.")
+        elif offset <= 30 and v_delta > 3:
+            print("\n📉 VERDICT: Vertical Mismatch. Overshooting or Tilt issue is the likely Root Cause.")
+        else:
+            print("\n🚫 VERDICT: Poor Coverage. User is not served by any main beam of this site.")
+            
+    return analysis_results # : Returning data

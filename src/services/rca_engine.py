@@ -16,6 +16,13 @@ def execute_selected_rca(rca_code, context):
 
     action = router.get(rca_code)
     if action:
-        action(context)
+        results = action(context)
     else:
         print(f"⚠️  RCA Code {rca_code} has no registered analyst.")
+    
+    # If we are in CLI, we format the dictionary back into a table
+    if isinstance(results, dict) and "cells" in results:
+        print("\n--- CLI TABLE VIEW ---")
+        for cell in results["cells"]:
+            print(f"{cell['cell_name']} | {cell['h_status']} | {cell['v_status']}")
+        print(f"\nVERDICT: {results['verdict']}")
