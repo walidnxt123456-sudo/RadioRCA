@@ -1,85 +1,304 @@
+"""
+RadioRCA - Manual Confirmation Interface
+Interactive geospatial analysis tool for radio network troubleshooting
+"""
 import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
 from services.analytics.geospatial import analyze
 
-st.set_page_config(page_title="RadioRCA | Manual Confirm", layout="wide")
+# ----------------------------------
+# CONSTANTS
+# ----------------------------------
+DEFAULT_LAT = 35.837097
+DEFAULT_LON = 10.624853
+DEFAULT_ZOOM = 15
+VALID_LAT_RANGE = (-90, 90)
+VALID_LON_RANGE = (-180, 180)
 
-# 1. Initialize Session State if empty
-if 'lat' not in st.session_state:
-    st.session_state.lat = 35.837097
-if 'lon' not in st.session_state:
-    st.session_state.lon = 10.624853
+# ----------------------------------
+# HELPER FUNCTIONS
+# ----------------------------------
+def validate_coordinates(lat: float, lon: float) -> bool:
+    """Validate latitude and longitude ranges."""
+    if not (VALID_LAT_RANGE[0] <= lat <= VALID_LAT_RANGE[1]):
+        return False
+    if not (VALID_LON_RANGE[0] <= lon <= VALID_LON_RANGE[1]):
+        return False
+    return True
 
-st.title("📡 RadioRCA: Location Confirmation")
+def update_coordinates(lat: float, lon: float) -> None:
+    """Update session state coordinates with validation."""
+    if validate_coordinates(lat, lon):
+        st.session_state.lat = lat
+        st.session_state.lon = lon
+    else:
+        st.error(f"Invalid coordinates: Lat({lat}), Lon({lon})")
 
-# 2. Sidebar with Immediate Sync
-with st.sidebar:
-    st.header("📍 Current Target")
-    # Link inputs to session state keys
-    u_lat = st.number_input("Latitude", value=st.session_state.lat, format="%.6f", key="lat_input")
-    u_lon = st.number_input("Longitude", value=st.session_state.lon, format="%.6f", key="lon_input")
+def create_map(lat: float, lon: float, zoom: int = DEFAULT_ZOOM) -> folium.Map:
+    """Create a Folium map with marker at specified coordinates."""
+    m = folium.Map(location=[lat, lon], zoom_start=zoom)
     
-    # Update state variables manually to ensure sync
-    st.session_state.lat = u_lat
-    st.session_state.lon = u_lon
+    folium.Marker(
+        [lat, lon],
+        icon=folium.Icon(color='blue', icon='crosshairs', prefix='fa'),
+        tooltip=f"Target Location: {lat:.6f}, {lon:.6f}"
+    ).add_to(m)
     
-    site_limit = st.slider("Nearby Sites", 1, 5, 1)
-    st.divider()
-    
-    # Trigger for the RCA Engine
-    run_btn = st.button("🚀 Confirm & Run Analysis", use_container_width=True)
+    return m
 
-# 3. Interactive Map (Selection Phase)
-st.subheader("🌍 1. Click Map to Select Location")
-m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=15)
+def color_status(val: str) -> str:
+    """Apply color coding based on status values."""
+    val_str = str(val)
+    if "✅" in val_str:
+        return 'background-color: #d4edda; color: #155724'  # Green for success
+    elif "❌" in val_str:
+        return 'background-color: #f8d7da; color: #721c24'  # Red for failure
+    elif "⚠️" in val_str:
+        return 'background-color: #fff3cd; color: #856404'  # Yellow for warning
+    return ''
 
-# Show a marker where the user is currently pointing
-folium.Marker(
-    [st.session_state.lat, st.session_state.lon], 
-    icon=folium.Icon(color='blue', icon='crosshairs', prefix='fa')
-).add_to(m)
-
-# IMPORTANT: returned_objects=["last_clicked"] makes the component responsive
-map_data = st_folium(m, width='stretch', height=450, returned_objects=["last_clicked"])
-
-# 4. Immediate Sync Logic
-if map_data and map_data.get("last_clicked"):
-    click_lat = map_data["last_clicked"]["lat"]
-    click_lon = map_data["last_clicked"]["lng"]
-    
-    # Detect if the click is different from current state
-    if click_lat != st.session_state.lat or click_lon != st.session_state.lon:
-        st.session_state.lat = click_lat
-        st.session_state.lon = click_lon
-        # This forces the sidebar to update instantly
-        st.rerun()
-
-# 5. Analysis Phase (Only runs on Button Press)
-if run_btn:
-    st.subheader("📊 2. RCA Diagnostic Results")
+def analyze_location(lat: float, lon: float, site_limit: int) -> dict:
+    """Wrapper function for location analysis."""
     ctx = {
-        'latitude': st.session_state.lat, 
-        'longitude': st.session_state.lon, 
-        'site_limit': site_limit, 
+        'latitude': lat,
+        'longitude': lon,
+        'site_limit': site_limit,
         'is_web': True
     }
+    return analyze(ctx)
+
+# ----------------------------------
+# SESSION STATE INITIALIZATION
+# ----------------------------------
+def init_session_state():
+    """Initialize all session state variables."""
+    if 'lat' not in st.session_state:
+        st.session_state.lat = DEFAULT_LAT
+    if 'lon' not in st.session_state:
+        st.session_state.lon = DEFAULT_LON
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = None
+    if 'map_key' not in st.session_state:
+        st.session_state.map_key = 0  # For forcing map rerenders
+
+# ----------------------------------
+# UI COMPONENTS
+# ----------------------------------
+def render_sidebar():
+    """Render the sidebar controls."""
+    with st.sidebar:
+        st.header("📍 Current Target")
+        
+        # Current coordinates display
+        st.metric("Latitude", f"{st.session_state.lat:.6f}")
+        st.metric("Longitude", f"{st.session_state.lon:.6f}")
+        
+        st.divider()
+        
+        # Coordinate inputs
+        st.subheader("Manual Adjustment")
+        col1, col2 = st.columns(2)
+        with col1:
+            new_lat = st.number_input(
+                "Latitude",
+                value=st.session_state.lat,
+                format="%.6f",
+                key="lat_input",
+                help="Enter latitude between -90 and 90"
+            )
+        with col2:
+            new_lon = st.number_input(
+                "Longitude",
+                value=st.session_state.lon,
+                format="%.6f",
+                key="lon_input",
+                help="Enter longitude between -180 and 180"
+            )
+        
+        # Update button for manual input
+        if st.button("Update Coordinates", width='stretch'):
+            update_coordinates(new_lat, new_lon)
+            st.session_state.map_key += 1  # Force map refresh
+            st.rerun()
+        
+        st.divider()
+        
+        # Analysis settings
+        st.subheader("Analysis Settings")
+        site_limit = st.slider(
+            "Nearby Sites to Analyze",
+            min_value=1,
+            max_value=10,
+            value=3,
+            help="Number of nearest sites to include in analysis"
+        )
+        
+        st.divider()
+        
+        # Action buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            analyze_btn = st.button(
+                "🚀 Run Analysis",
+                width='stretch',
+                type="primary",
+                help="Analyze selected location"
+            )
+        with col2:
+            if st.button("🔄 Reset", width='stretch'):
+                st.session_state.lat = DEFAULT_LAT
+                st.session_state.lon = DEFAULT_LON
+                st.session_state.analysis_results = None
+                st.session_state.map_key += 1
+                st.rerun()
+        
+        return site_limit, analyze_btn
+
+def render_map():
+    """Render the interactive map."""
+    st.subheader("🌍 1. Click Map to Select Location")
     
-    results = analyze(ctx)
+    # Create map with current coordinates
+    m = create_map(st.session_state.lat, st.session_state.lon)
+    
+    # Render map and capture clicks
+    map_data = st_folium(
+        m,
+        width='stretch',
+        height=500,
+        returned_objects=["last_clicked"],
+        key=f"main_map_{st.session_state.map_key}"
+    )
+    
+    # Handle map clicks
+    if map_data and map_data.get("last_clicked"):
+        click_lat = map_data["last_clicked"]["lat"]
+        click_lon = map_data["last_clicked"]["lng"]
+        
+        # Update if click is different
+        if (abs(click_lat - st.session_state.lat) > 0.000001 or 
+            abs(click_lon - st.session_state.lon) > 0.000001):
+            
+            update_coordinates(click_lat, click_lon)
+            st.success(f"Location updated: {click_lat:.6f}, {click_lon:.6f}")
+            st.session_state.map_key += 1
+            st.rerun()
+
+def render_analysis_results(results: dict):
+    """Render the analysis results in a formatted way."""
+    st.subheader("📊 2. RCA Diagnostic Results")
     
     if "cells" in results and results["cells"]:
         df_display = pd.DataFrame(results["cells"])
         
-        # Color coding for better visibility
-        def color_status(val):
-            if "✅" in str(val): return 'background-color: #d4edda'
-            if "❌" in str(val): return 'background-color: #f8d7da'
-            return ''
-
+        # Display metrics if available
+        if "summary" in results:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Cells", len(results["cells"]))
+            with col2:
+                healthy = sum(1 for cell in results["cells"] 
+                            if "✅" in str(cell.get('h_status', '')) 
+                            and "✅" in str(cell.get('v_status', '')))
+                st.metric("Healthy Cells", healthy)
+            with col3:
+                st.metric("Sites Analyzed", results.get("sites_analyzed", "N/A"))
+        
+        # Display data with styling
+        styled_df = df_display.style.map(
+            color_status,
+            subset=[col for col in ['h_status', 'v_status'] if col in df_display.columns]
+        )
+        
         st.dataframe(
-            df_display.style.map(color_status, subset=['h_status', 'v_status']),
+            styled_df,
+            width='stretch',
+            hide_index=True
+        )
+        
+        # Add download option
+        csv = df_display.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Results as CSV",
+            data=csv,
+            file_name="radiorca_analysis.csv",
+            mime="text/csv",
             width='stretch'
         )
     else:
         st.warning("No cell data found. Check if database is loaded.")
+        
+        # Show debug info if available
+        if "error" in results:
+            st.error(f"Error: {results['error']}")
+        if "message" in results:
+            st.info(results["message"])
+
+# ----------------------------------
+# MAIN APPLICATION
+# ----------------------------------
+def main():
+    """Main application function."""
+    # Page configuration
+    st.set_page_config(
+        page_title="RadioRCA | Manual Confirm",
+        layout="wide",
+        page_icon="📡"
+    )
+    
+    # Initialize session state
+    init_session_state()
+    
+    # Application header
+    st.title("📡 RadioRCA: Location Confirmation")
+    st.markdown("""
+    Interactive tool for radio network analysis and troubleshooting. 
+    Select a location on the map or enter coordinates manually, then run the RCA analysis.
+    """)
+    
+    # Render UI components
+    site_limit, analyze_btn = render_sidebar()
+    render_map()
+    
+    # ----------------------------------
+    # EVENT HANDLERS
+    # ----------------------------------
+    # Handle analysis button click
+    if analyze_btn:
+        with st.spinner("Running RCA Analysis..."):
+            try:
+                # Validate coordinates before analysis
+                if not validate_coordinates(st.session_state.lat, st.session_state.lon):
+                    st.error("Invalid coordinates. Please select a valid location.")
+                    st.stop()
+                
+                # Run analysis
+                results = analyze_location(
+                    st.session_state.lat,
+                    st.session_state.lon,
+                    site_limit
+                )
+                
+                # Store results in session state
+                st.session_state.analysis_results = results
+                
+                # Show success message
+                st.success("Analysis completed successfully!")
+                
+            except Exception as e:
+                st.error(f"Analysis failed: {str(e)}")
+                st.session_state.analysis_results = None
+                st.stop()
+    
+    # Display previous results if available
+    if st.session_state.analysis_results:
+        st.divider()
+        render_analysis_results(st.session_state.analysis_results)
+
+# ----------------------------------
+# APPLICATION ENTRY POINT
+# ----------------------------------
+if __name__ == "__main__":
+    main()
