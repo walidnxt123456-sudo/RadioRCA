@@ -22,6 +22,26 @@ DEFAULT_ZOOM = 15
 VALID_LAT_RANGE = (-90, 90)
 VALID_LON_RANGE = (-180, 180)
 
+def add_map_legend(m):
+    """Adds a visual legend to the Folium map using HTML/CSS."""
+    legend_html = '''
+     <div style="
+     position: fixed; 
+     bottom: 50px; left: 50px; width: 160px; height: 120px; 
+     background-color: white; border:2px solid grey; z-index:9999; font-size:12px;
+     padding: 10px;
+     border-radius: 5px;
+     box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+     ">
+     <b>Legend</b><br>
+     <i style="background: rgba(65, 105, 225, 0.3); border: 1px solid royalblue; width: 12px; height: 12px; display: inline-block;"></i> Ant. Sector (60°)<br>
+     <i style="background: #28a745; width: 20px; height: 3px; display: inline-block; margin-bottom: 3px;"></i> Direct Path (✅)<br>
+     <i style="background: #dc3545; width: 20px; height: 3px; display: inline-block; margin-bottom: 3px;"></i> Side/Back Path (❌)<br>
+     <i style="background: white; border: 2px solid black; border-radius: 50%; width: 10px; height: 10px; display: inline-block;"></i> Cell Site
+     </div>
+     '''
+    m.get_root().html.add_child(folium.Element(legend_html))
+    
 def get_wedge_points(center_lat, center_lon, azimuth, distance_km=0.3, beamwidth=60):
     """Calculates coordinates for the sector wedge polygon."""
     points = [[center_lat, center_lon]]
@@ -264,6 +284,8 @@ def render_map():
                 fill_opacity=1,
                 popup=f"Site: {cell['site_id']}"
             ).add_to(m)
+        # ADD THE LEGEND HERE
+        add_map_legend(m)
     
     # Render map and capture clicks
     map_data = st_folium(
