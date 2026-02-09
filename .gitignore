@@ -10,3 +10,5 @@ __pycache__/
 data/rca_history.json
 data/input/*
 data/rca_history.json
+radiorca.log*
+radiorca_debug.log*
