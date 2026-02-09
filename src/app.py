@@ -2,6 +2,7 @@
 RadioRCA - Manual Confirmation Interface
 Interactive geospatial analysis tool for radio network troubleshooting
 """
+import math
 import os
 import streamlit as st
 import pandas as pd
@@ -21,6 +22,22 @@ DEFAULT_ZOOM = 15
 VALID_LAT_RANGE = (-90, 90)
 VALID_LON_RANGE = (-180, 180)
 
+def get_wedge_points(center_lat, center_lon, azimuth, distance_km=0.3, beamwidth=60):
+    """Calculates coordinates for the sector wedge polygon."""
+    points = [[center_lat, center_lon]]
+    start_angle = azimuth - (beamwidth / 2)
+    end_angle = azimuth + (beamwidth / 2)
+    
+    # Create smooth arc
+    for angle in range(int(start_angle), int(end_angle) + 5, 5):
+        rad = math.radians(angle)
+        # Approximate meters to lat/lon degrees
+        lat = center_lat + (distance_km / 111.32) * math.cos(rad)
+        lon = center_lon + (distance_km / (111.32 * math.cos(math.radians(center_lat)))) * math.sin(rad)
+        points.append([lat, lon])
+        
+    points.append([center_lat, center_lon])
+    return points
 
 #displays the last 20 lines of the log file
 def get_last_logs(filename=LOG_FILE, n=20):
@@ -199,6 +216,54 @@ def render_map():
     
     # Create map with current coordinates
     m = create_map(st.session_state.lat, st.session_state.lon)
+    
+    # DRAW SERVING PATHS
+    if st.session_state.analysis_results and "cells" in st.session_state.analysis_results:
+        for cell in st.session_state.analysis_results["cells"]:
+            site_coords = [cell["site_lat"], cell["site_lon"]]
+            user_coords = [st.session_state.lat, st.session_state.lon]
+            
+            # 1. Draw the Sector Wedge
+            if cell.get("azimuth") is not None:
+                wedge_points = get_wedge_points(
+                    cell["site_lat"], 
+                    cell["site_lon"], 
+                    cell["azimuth"],
+                    distance_km=0.3  # Length of the wedge on map
+                )
+                
+                folium.Polygon(
+                    locations=wedge_points,
+                    color="royalblue",
+                    fill=True,
+                    fill_opacity=0.3,
+                    weight=1,
+                    tooltip=f"Sector Azimuth: {cell['azimuth']}°"
+                ).add_to(m)
+            
+            # Determine color based on Horizontal Status
+            # ✅ [DIRECT] -> green | Others -> red
+            line_color = "#28a745" if "✅" in cell["h_status"] else "#dc3545"
+            
+            # Create the path line
+            folium.PolyLine(
+                locations=[site_coords, user_coords],
+                color=line_color,
+                weight=3,
+                opacity=0.8,
+                tooltip=f"Cell: {cell['cell_name']} | Distance: {cell['distance']}km"
+            ).add_to(m)
+            
+            # Add a small marker for the Site itself
+            folium.CircleMarker(
+                location=site_coords,
+                radius=4,
+                color="black",
+                fill=True,
+                fill_color="white",
+                fill_opacity=1,
+                popup=f"Site: {cell['site_id']}"
+            ).add_to(m)
     
     # Render map and capture clicks
     map_data = st_folium(
