@@ -15,7 +15,6 @@ RadioRCA is designed to bridge the gap between messy network exports and actiona
 * **Visual Insights**: Map-based antenna wedges and site-to-user path visualization.
 
 ## 💻 Quick Start
-1. **Process new data**:
-   ```bash
-
-   python3 src/main.py
+## 🛠️ Execution
+- **Web App**: `streamlit run src/app.py`
+- **CLI**: `python src/main.py`
