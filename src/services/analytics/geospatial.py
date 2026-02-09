@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from infrastructure.logger import log
 from ..rca_utils import get_latest_clean_file, fetch_ericsson_e_tilt_group
 
 def calculate_required_tilt(height_m, distance_km):
@@ -9,7 +10,9 @@ def calculate_required_tilt(height_m, distance_km):
     distance_m = distance_km * 1000
     # tan(theta) = Opp / Adj -> Tilt = arctan(HBA / Dist)
     tilt_rad = np.arctan2(height_m, distance_m)
-    return round(float(np.degrees(tilt_rad)), 1)
+    res = round(float(np.degrees(tilt_rad)), 1)
+    log.debug(f"[TILT] HBA: {height_m}m, Dist: {distance_km}km -> Req: {res}°")
+    return res
 
 def calculate_angle_offset(azimuth, bearing):
     """Calculates the absolute minimum difference between antenna azimuth and user bearing."""
@@ -43,6 +46,8 @@ def analyze(ctx):
     is_web = ctx.get('is_web', False)
     site_limit = ctx.get('site_limit', 1)
     
+    log.info(f"Engine analyzing {site_limit} sites around ({u_lat}, {u_lon})")
+    
     if not is_web:
         # Input Request
         print("\n" + "-"*60)
@@ -50,9 +55,12 @@ def analyze(ctx):
         site_limit = int(limit_input) if limit_input and limit_input.isdigit() else 1
 
     file_path = get_latest_clean_file("database", "database_")
-    if not file_path: return print("⚠️ Clean database not found.")
+    if not file_path: 
+        log.error("Database file missing in 'database/' directory.")
+        return print("⚠️ Clean database not found.")
 
     df = pd.read_csv(file_path)
+    log.info(f"Database loaded: {len(df)} rows found.")
     
     # FIX: Correct string accessor for index
     df.columns = df.columns.str.strip().str.lower()
@@ -83,6 +91,7 @@ def analyze(ctx):
     
     for site in unique_nearest_sites:
         # Get all cells belonging to this site
+        log.debug(f"Processing Site ID: {site}")
         site_cells = df[df[site_col] == site].copy()
         
         for _, row in site_cells.iterrows():
@@ -93,6 +102,9 @@ def analyze(ctx):
             # 2. Calculate the Offset (the "Shit-factor" for radio gain)
             azimuth = row[azi_col] if azi_col else None
             offset = calculate_angle_offset(azimuth, angle_to_user)
+            
+            # Log raw horizontal values
+            log.debug(f"[AZI] Cell: {row[cell_col]} | Azi: {azimuth}° | User Bearing: {int(angle_to_user)}° | Offset: {offset}°")
             
             # --- VERTICAL BLOCK (Tilt) ---
             # Extract height and electrical tilt independently

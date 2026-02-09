@@ -2,11 +2,15 @@
 RadioRCA - Manual Confirmation Interface
 Interactive geospatial analysis tool for radio network troubleshooting
 """
+import os
 import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
 from services.analytics.geospatial import analyze
+from collections import deque
+from infrastructure.logger import log, LOG_FILE
+
 
 # ----------------------------------
 # CONSTANTS
@@ -16,6 +20,19 @@ DEFAULT_LON = 10.624853
 DEFAULT_ZOOM = 15
 VALID_LAT_RANGE = (-90, 90)
 VALID_LON_RANGE = (-180, 180)
+
+
+#displays the last 20 lines of the log file
+def get_last_logs(filename=LOG_FILE, n=20):
+    """Efficiently read the last N lines of the log file."""
+    if not os.path.exists(filename):
+        return [f"Log file not found: {filename}"]
+    try:
+        with open(filename, "r") as f:
+            # deque with maxlen=n automatically keeps only the last n elements
+            return list(deque(f, n))
+    except Exception as e:
+        return [f"Error reading logs: {str(e)}"]
 
 # ----------------------------------
 # HELPER FUNCTIONS
@@ -30,10 +47,13 @@ def validate_coordinates(lat: float, lon: float) -> bool:
 
 def update_coordinates(lat: float, lon: float) -> None:
     """Update session state coordinates with validation."""
+    log.debug(f"Attempting coordinate update: {lat}, {lon}")
     if validate_coordinates(lat, lon):
         st.session_state.lat = lat
         st.session_state.lon = lon
+        log.info(f"Target synchronized to: {lat:.6f}, {lon:.6f}")
     else:
+        log.error(f"Validation failed for Lat: {lat}, Lon: {lon}")
         st.error(f"Invalid coordinates: Lat({lat}), Lon({lon})")
 
 def create_map(lat: float, lon: float, zoom: int = DEFAULT_ZOOM) -> folium.Map:
@@ -61,13 +81,16 @@ def color_status(val: str) -> str:
 
 def analyze_location(lat: float, lon: float, site_limit: int) -> dict:
     """Wrapper function for location analysis."""
+    log.debug(f"🚀 Starting RCA Engine | Lat: {lat}, Lon: {lon}, Limit: {site_limit}")
     ctx = {
         'latitude': lat,
         'longitude': lon,
         'site_limit': site_limit,
         'is_web': True
     }
-    return analyze(ctx)
+    results = analyze(ctx)
+    log.debug(f"Engine returned {len(results.get('cells', []))} cells for analysis.")
+    return results
 
 # ----------------------------------
 # SESSION STATE INITIALIZATION
@@ -153,6 +176,20 @@ def render_sidebar():
                 st.session_state.analysis_results = None
                 st.session_state.map_key += 1
                 st.rerun()
+        
+        st.divider()
+        
+        # FUTURE: if st.session_state.get("is_admin"):
+        with st.sidebar.expander("🛠️ Admin / Debug Tools"):
+            st.info("Log Viewer (Last 20 lines)")
+            if st.button("📋 Refresh Logs", width='stretch'):
+                # This triggers a rerun, and the logs will update below
+                pass 
+            
+            logs = get_last_logs()
+            # Join lines into a single string for the code block
+            log_text = "".join(logs)
+            st.code(log_text, language="log")        
         
         return site_limit, analyze_btn
 
