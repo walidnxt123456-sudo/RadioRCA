@@ -129,6 +129,15 @@ def analyze_location(lat: float, lon: float, site_limit: int) -> dict:
     log.debug(f"Engine returned {len(results.get('cells', []))} cells for analysis.")
     return results
 
+
+def get_wedge_tip(center_lat, center_lon, azimuth, distance_km=0.3):
+    """Calculates the center-point of the wedge arc (the tip)."""
+    rad = math.radians(azimuth)
+    # Convert km to lat/lon degrees
+    lat_tip = center_lat + (distance_km / 111.32) * math.cos(rad)
+    lon_tip = center_lon + (distance_km / (111.32 * math.cos(math.radians(center_lat)))) * math.sin(rad)
+    return [lat_tip, lon_tip]
+  
 # ----------------------------------
 # SESSION STATE INITIALIZATION
 # ----------------------------------
@@ -142,7 +151,7 @@ def init_session_state():
         st.session_state.analysis_results = None
     if 'map_key' not in st.session_state:
         st.session_state.map_key = 0  # For forcing map rerenders
-
+  
 # ----------------------------------
 # UI COMPONENTS
 # ----------------------------------
@@ -242,8 +251,17 @@ def render_map():
         for cell in st.session_state.analysis_results["cells"]:
             site_coords = [cell["site_lat"], cell["site_lon"]]
             user_coords = [st.session_state.lat, st.session_state.lon]
+            azimuth = cell.get("azimuth")
+            offset = cell.get("offset")
             
-            # 1. Draw the Sector Wedge
+            # Define the Wedge Tip (where the line will now start)
+            # We use the same distance as the wedge radius (e.g., 0.3km)
+            if azimuth is not None:
+                start_point = get_wedge_tip(cell["site_lat"], cell["site_lon"], azimuth, distance_km=0.3)
+            else:
+                start_point = site_coords # Fallback if no azimuth
+            
+            # Draw the Sector Wedge
             if cell.get("azimuth") is not None:
                 wedge_points = get_wedge_points(
                     cell["site_lat"], 
@@ -265,14 +283,19 @@ def render_map():
             # ✅ [DIRECT] -> green | Others -> red
             line_color = "#28a745" if "✅" in cell["h_status"] else "#dc3545"
             
-            # Create the path line
-            folium.PolyLine(
-                locations=[site_coords, user_coords],
-                color=line_color,
-                weight=3,
-                opacity=0.8,
-                tooltip=f"Cell: {cell['cell_name']} | Distance: {cell['distance']}km"
-            ).add_to(m)
+            # Draw the Path Line (Starting from the TIP)(ONLY if offset <= 100°)
+            # This keeps the map clean from extreme backlobe connections
+            if offset is not None and offset <= 100:
+                folium.PolyLine(
+                    locations=[start_point, user_coords],
+                    color=line_color,
+                    weight=3,
+                    opacity=0.8,
+                    tooltip=f"Cell: {cell['cell_name']} | Distance: {cell['distance']}km"
+                ).add_to(m)
+            else:
+                # Optional: Log that a line was skipped for clarity during debugging
+                log.info(f"Skipping path line for {cell['cell_name']} - Offset ({offset}°) > 100°")
             
             # Add a small marker for the Site itself
             folium.CircleMarker(
