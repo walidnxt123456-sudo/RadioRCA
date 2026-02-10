@@ -294,7 +294,7 @@ def render_map(tech_choice):
                     fill=True,
                     fill_opacity=0.3,
                     weight=1,
-                    tooltip=f"Cell: {name} | Band: {band_name} | Sector Azimuth: {cell['azimuth']}°"
+                    tooltip=f"Site: {cell['site_id']} | Cell: {name} | Band: {band_name} | Sector Azimuth: {cell['azimuth']}°"
                 ).add_to(m)
             
             # Determine color based on Horizontal Status
@@ -309,7 +309,7 @@ def render_map(tech_choice):
                     color=line_color,
                     weight=3,
                     opacity=0.8,
-                    tooltip=f"Cell: {cell['cell_name']} | Distance: {cell['distance']}km"
+                    tooltip=f"Site: {cell['site_id']} | Cell: {cell['cell_name']} | Distance: {cell['distance']}km"
                 ).add_to(m)
             else:
                 # Optional: Log that a line was skipped for clarity during debugging
