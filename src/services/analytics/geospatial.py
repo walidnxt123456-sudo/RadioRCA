@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from infrastructure.logger import log
 from ..rca_utils import get_latest_clean_file, fetch_ericsson_e_tilt_group
+from .radio_utils import find_standard_col
 
 def calculate_required_tilt(height_m, distance_km):
     """Calculates the downward angle (tilt) required to reach the user's location."""
@@ -39,34 +40,6 @@ def haversine(lat1, lon1, lat2, lon2):
     a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
     return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
     
-def find_standard_col(df_columns, target_type, default=None):
-    """
-    Maps various naming conventions to standard radio columns.
-    target_type: 'lat', 'lon', 'azi', 'site', 'cell', 'hba', 'tilt'
-    """
-    mapping = {
-        'lat': ['lat', 'latitude', 'y_coord', 'north'],
-        'lon': ['lon', 'long', 'longitude', 'x_coord', 'east'],
-        'azi': ['azi', 'dir', 'orientation', 'angle', 'beam'],
-        'site': ['site', 'node', 'enodeb', 'site_id'],
-        'cell': ['cell', 'sector', 'antenna', 'cell_name'],
-        'hba': ['hba', 'height', 'mha', 'altitude'],
-        'tilt': ['tilt', 'etilt', 'e-tilt', 'elect_tilt']
-    }
-    
-    keywords = mapping.get(target_type, [])
-    for col in df_columns:
-        if any(key.lower() in col.lower() for key in keywords):
-            log.info(f"[MAPPER] Found '{col}' for {target_type.upper()}")
-            return col
-            
-    if default:
-        log.warning(f"[MAPPER] No match for {target_type.upper()}, defaulting to '{default}'")
-    else:
-        log.debug(f"[MAPPER] Optional column {target_type.upper()} not found.")
-        
-    return default
-
 def analyze(ctx):
     u_lat, u_lon = ctx.get('latitude'), ctx.get('longitude')
     
@@ -103,6 +76,7 @@ def analyze(ctx):
     cell_col = find_standard_col(df.columns, 'cell', default=site_col)
     hba_col  = find_standard_col(df.columns, 'hba')
     etilt_col = find_standard_col(df.columns, 'tilt')
+    arfcn_col = find_standard_col(df.columns, 'arfcn')
     log.info(f"Mapping Complete: Site='{site_col}', Cell='{cell_col}', Azi='{azi_col}'")
     
     # Safety check
@@ -182,8 +156,9 @@ def analyze(ctx):
             cell_data = {
                 "site_id": str(row[site_col]),
                 "cell_name": str(row[cell_col]),
-                "site_lat": float(row[lat_col]),  # Added for mapping
-                "site_lon": float(row[lon_col]),  # Added for mapping
+                "arfcn": row[arfcn_col] if arfcn_col else None,
+                "site_lat": float(row[lat_col]),
+                "site_lon": float(row[lon_col]),
                 "distance": round(row['distance_km'], 2),
                 "azimuth": int(row[azi_col]) if azi_col else 0,
                 "bearing": int(angle_to_user),
@@ -212,6 +187,25 @@ def analyze(ctx):
         if not is_web:
             print("-" * 85) # Separator between different sites
 
+    # Calculate a final verdict for the whole site or best cell
+    # Get 3 closest cells by distance
+    analysis_results["top_distance"] = sorted(analysis_results["cells"], key=lambda x: x['distance'])[:3]
+    
+    # Get 3 best cells by offset (Directivity)
+    analysis_results["top_offset"] = sorted(analysis_results["cells"], key=lambda x: x['offset'] if x['offset'] is not None else 999)[:3]
+    
+    # best_cell logic for the main verdict
+    best_cell = min(analysis_results["cells"], key=lambda x: x['offset'] if x['offset'] is not None else 999)
+    b_site = best_cell['site_id']
+    b_cell = best_cell['cell_name']
+
+    if best_cell['offset'] <= 30 and "✅" in best_cell['v_status']:
+        analysis_results["verdict"] = f"🎯 Sweet Spot: {b_site} ({b_cell}) has Horizontal & Vertical alignment OK."
+    elif best_cell['offset'] > 30:
+        analysis_results["verdict"] = f"📢 Horizontal Mismatch: Azimuth on {b_site} ({b_cell}) is likely the Root Cause."
+    else:
+        analysis_results["verdict"] = f"📉 Vertical Mismatch: Check Tilt/Overshooting on {b_site} ({b_cell})."
+    
     if not is_web:
         # RCA Insight
         best_dist = df['distance_km'].min()

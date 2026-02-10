@@ -1,4 +1,34 @@
-# src/services/analytics/radio_utils.py
+from infrastructure.logger import log 
+
+def find_standard_col(df_columns, target_type, default=None):
+    """
+    Maps various naming conventions to standard radio columns.
+    target_type: 'lat', 'lon', 'azi', 'site', 'cell', 'hba', 'tilt'
+    """
+    mapping = {
+        'lat': ['lat', 'latitude', 'y_coord', 'north'],
+        'lon': ['lon', 'long', 'longitude', 'x_coord', 'east'],
+        'azi': ['azi', 'dir', 'orientation', 'angle', 'beam'],
+        'site': ['site', 'node', 'enodeb', 'site_id'],
+        'cell': ['cell', 'sector', 'antenna', 'cell_name'],
+        'hba': ['hba', 'height', 'mha', 'altitude'],
+        'tilt': ['tilt', 'etilt', 'e-tilt', 'elect_tilt'],
+        'arfcn': ['arfcn', 'earfcndl', 'earfcn', 'ssbfrequency', 'ssb_freq']
+    }
+    
+    keywords = mapping.get(target_type, [])
+    for col in df_columns:
+        if any(key.lower() in col.lower() for key in keywords):
+            log.info(f"[MAPPER] Found '{col}' for {target_type.upper()}")
+            return col
+            
+    if default:
+        log.warning(f"[MAPPER] No match for {target_type.upper()}, defaulting to '{default}'")
+    else:
+        log.debug(f"[MAPPER] Optional column {target_type.upper()} not found.")
+        
+    return default
+
 
 def get_lte_band(cell_name, earfcn):
     """Specific mapping for LTE bands based on EARFCNDL and suffixes."""

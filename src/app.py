@@ -124,7 +124,7 @@ def color_status(val: str) -> str:
 
 def analyze_location(lat: float, lon: float, site_limit: int) -> dict:
     """Wrapper function for location analysis."""
-    log.debug(f"🚀 Starting RCA Engine | Lat: {lat}, Lon: {lon}, Limit: {site_limit}")
+    log.debug(f"Starting RCA Engine | Lat: {lat}, Lon: {lon}, Limit: {site_limit}")
     ctx = {
         'latitude': lat,
         'longitude': lon,
@@ -392,6 +392,24 @@ def render_analysis_results(results: dict):
             mime="text/csv",
             width='stretch'
         )
+        
+        if "verdict" in results:
+            st.divider()
+            st.subheader("🎯 Root Cause Analysis Summary")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("##### 📍 3 Closest Cells")
+                for c in results.get("top_distance", []):
+                    st.write(f"- **{c['site_id']}**-**{c['cell_name']}**: {c['distance']}km :Offset {c['offset']}° ({c['h_status']})")
+                    
+            with col2:
+                st.markdown("##### 📡 3 Best Aligned Cells")
+                for c in results.get("top_offset", []):
+                    st.write(f"- **{c['site_id']}**-**{c['cell_name']}**: {c['distance']}km :Offset {c['offset']}° ({c['h_status']})")
+
+            st.info(f"💡 **Final Verdict:** {results['verdict']}")
+            
     else:
         st.warning("No cell data found. Check if database is loaded.")
         
