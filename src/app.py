@@ -11,7 +11,7 @@ from streamlit_folium import st_folium
 from services.analytics.geospatial import analyze
 from collections import deque
 from infrastructure.logger import log, LOG_FILE
-
+from services.analytics.radio_utils import get_lte_band, get_nr_band
 
 # ----------------------------------
 # CONSTANTS
@@ -22,24 +22,30 @@ DEFAULT_ZOOM = 15
 VALID_LAT_RANGE = (-90, 90)
 VALID_LON_RANGE = (-180, 180)
 
-def add_map_legend(m):
-    """Adds a visual legend to the Folium map using HTML/CSS."""
-    legend_html = '''
-     <div style="
-     position: fixed; 
-     bottom: 50px; left: 50px; width: 160px; height: 120px; 
-     background-color: white; border:2px solid grey; z-index:9999; font-size:12px;
-     padding: 10px;
-     border-radius: 5px;
-     box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
-     ">
-     <b>Legend</b><br>
-     <i style="background: rgba(65, 105, 225, 0.3); border: 1px solid royalblue; width: 12px; height: 12px; display: inline-block;"></i> Ant. Sector (60°)<br>
-     <i style="background: #28a745; width: 20px; height: 3px; display: inline-block; margin-bottom: 3px;"></i> Direct Path (✅)<br>
-     <i style="background: #dc3545; width: 20px; height: 3px; display: inline-block; margin-bottom: 3px;"></i> Side/Back Path (❌)<br>
-     <i style="background: white; border: 2px solid black; border-radius: 50%; width: 10px; height: 10px; display: inline-block;"></i> Cell Site
-     </div>
-     '''
+def add_map_legend(m, tech):
+    """Adds a technology-specific HTML legend to the Folium map."""
+    if tech == "NR":
+        legend_html = '''
+        <div style="position: fixed; bottom: 50px; left: 50px; width: 150px; height: 110px; 
+                    background-color: white; border:2px solid grey; z-index:9999; font-size:12px;
+                    padding: 10px; border-radius: 5px;">
+        <b>NR Bands</b><br>
+        <i style="background: #e377c2; width: 10px; height: 10px; display: inline-block;"></i> NR3500<br>
+        <i style="background: #9467bd; width: 10px; height: 10px; display: inline-block;"></i> NR700/800<br>
+        <i style="background: #2ca02c; width: 10px; height: 10px; display: inline-block;"></i> NR1800 (n3)<br>
+        </div>
+        '''
+    else:
+        legend_html = '''
+        <div style="position: fixed; bottom: 50px; left: 50px; width: 150px; height: 110px; 
+                    background-color: white; border:2px solid grey; z-index:9999; font-size:12px;
+                    padding: 10px; border-radius: 5px;">
+        <b>LTE Bands</b><br>
+        <i style="background: #1f77b4; width: 10px; height: 10px; display: inline-block;"></i> LTE800<br>
+        <i style="background: #2ca02c; width: 10px; height: 10px; display: inline-block;"></i> LTE1800<br>
+        <i style="background: #ff7f0e; width: 10px; height: 10px; display: inline-block;"></i> LTE2100<br>
+        </div>
+        '''
     m.get_root().html.add_child(folium.Element(legend_html))
     
 def get_wedge_points(center_lat, center_lon, azimuth, distance_km=0.3, beamwidth=60):
@@ -158,6 +164,10 @@ def init_session_state():
 def render_sidebar():
     """Render the sidebar controls."""
     with st.sidebar:
+        
+        st.sidebar.header("Technology Settings")
+        tech_choice = st.sidebar.radio("Select Technology:", ("LTE", "NR"))
+        
         st.header("📍 Current Target")
         
         # Current coordinates display
@@ -237,9 +247,9 @@ def render_sidebar():
             log_text = "".join(logs)
             st.code(log_text, language="log")        
         
-        return site_limit, analyze_btn
+        return site_limit, analyze_btn, tech_choice
 
-def render_map():
+def render_map(tech_choice):
     """Render the interactive map."""
     st.subheader("🌍 1. Click Map to Select Location")
     
@@ -253,11 +263,19 @@ def render_map():
             user_coords = [st.session_state.lat, st.session_state.lon]
             azimuth = cell.get("azimuth")
             offset = cell.get("offset")
+            name = cell.get('cell_name')
+            freq = cell.get('arfcn')
+            # Use the user's manual choice to pick the logic
+            if tech_choice == "NR":
+                band_name, band_color, radius = get_nr_band(name, freq)
+            else:
+                band_name, band_color, radius = get_lte_band(name, freq)
+            
             
             # Define the Wedge Tip (where the line will now start)
             # We use the same distance as the wedge radius (e.g., 0.3km)
             if azimuth is not None:
-                start_point = get_wedge_tip(cell["site_lat"], cell["site_lon"], azimuth, distance_km=0.3)
+                start_point = get_wedge_tip(cell["site_lat"], cell["site_lon"], azimuth, distance_km=radius)
             else:
                 start_point = site_coords # Fallback if no azimuth
             
@@ -267,16 +285,16 @@ def render_map():
                     cell["site_lat"], 
                     cell["site_lon"], 
                     cell["azimuth"],
-                    distance_km=0.3  # Length of the wedge on map
+                    distance_km=radius  # Length of the wedge on map
                 )
                 
                 folium.Polygon(
                     locations=wedge_points,
-                    color="royalblue",
+                    color=band_color,
                     fill=True,
                     fill_opacity=0.3,
                     weight=1,
-                    tooltip=f"Sector Azimuth: {cell['azimuth']}°"
+                    tooltip=f"Cell: {name} | Band: {band_name} | Sector Azimuth: {cell['azimuth']}°"
                 ).add_to(m)
             
             # Determine color based on Horizontal Status
@@ -308,7 +326,7 @@ def render_map():
                 popup=f"Site: {cell['site_id']}"
             ).add_to(m)
         # ADD THE LEGEND HERE
-        add_map_legend(m)
+        add_map_legend(m, tech_choice)
     
     # Render map and capture clicks
     map_data = st_folium(
@@ -406,8 +424,8 @@ def main():
     """)
     
     # Render UI components
-    site_limit, analyze_btn = render_sidebar()
-    render_map()
+    site_limit, analyze_btn, tech_choice = render_sidebar()
+    render_map(tech_choice)
     
     # ----------------------------------
     # EVENT HANDLERS
