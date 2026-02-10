@@ -38,6 +38,34 @@ def haversine(lat1, lon1, lat2, lon2):
     dphi, dlambda = np.radians(lat2-lat1), np.radians(lon2-lon1)
     a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
     return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+    
+def find_standard_col(df_columns, target_type, default=None):
+    """
+    Maps various naming conventions to standard radio columns.
+    target_type: 'lat', 'lon', 'azi', 'site', 'cell', 'hba', 'tilt'
+    """
+    mapping = {
+        'lat': ['lat', 'latitude', 'y_coord', 'north'],
+        'lon': ['lon', 'long', 'longitude', 'x_coord', 'east'],
+        'azi': ['azi', 'dir', 'orientation', 'angle', 'beam'],
+        'site': ['site', 'node', 'enodeb', 'site_id'],
+        'cell': ['cell', 'sector', 'antenna', 'cell_name'],
+        'hba': ['hba', 'height', 'mha', 'altitude'],
+        'tilt': ['tilt', 'etilt', 'e-tilt', 'elect_tilt']
+    }
+    
+    keywords = mapping.get(target_type, [])
+    for col in df_columns:
+        if any(key.lower() in col.lower() for key in keywords):
+            log.info(f"[MAPPER] Found '{col}' for {target_type.upper()}")
+            return col
+            
+    if default:
+        log.warning(f"[MAPPER] No match for {target_type.upper()}, defaulting to '{default}'")
+    else:
+        log.debug(f"[MAPPER] Optional column {target_type.upper()} not found.")
+        
+    return default
 
 def analyze(ctx):
     u_lat, u_lon = ctx.get('latitude'), ctx.get('longitude')
@@ -66,16 +94,22 @@ def analyze(ctx):
     df.columns = df.columns.str.strip().str.lower()
 
     # Identify columns
-    lat_col = next(c for c in df.columns if 'lat' in c)
-    lon_col = next(c for c in df.columns if 'lon' in c)
-    azi_col = next((c for c in df.columns if 'azi' in c), None)
-    site_col = next((c for c in df.columns if 'site' in c), df.columns[0])
-    cell_col = next((c for c in df.columns if 'cell' in c), site_col)
-
-    # Identify Vertical columns independently
-    hba_col = next((c for c in df.columns if any(k in c for k in ['hba', 'height', 'mha'])), None)
-    etilt_col = next((c for c in df.columns if any(k in c for k in ['etilt', 'e-tilt', 'elect_tilt'])), None)
-
+    log.info("--- Starting Column Mapping ---")
+    # Map columns
+    lat_col  = find_standard_col(df.columns, 'lat')
+    lon_col  = find_standard_col(df.columns, 'lon')
+    azi_col  = find_standard_col(df.columns, 'azi')
+    site_col = find_standard_col(df.columns, 'site', default=df.columns[0])
+    cell_col = find_standard_col(df.columns, 'cell', default=site_col)
+    hba_col  = find_standard_col(df.columns, 'hba')
+    etilt_col = find_standard_col(df.columns, 'tilt')
+    log.info(f"Mapping Complete: Site='{site_col}', Cell='{cell_col}', Azi='{azi_col}'")
+    
+    # Safety check
+    if not lat_col or not lon_col:
+        log.error(f"Critical mapping failure. Columns available: {list(df.columns)}")
+        raise ValueError("Critical mapping failure: Latitude or Longitude not found.")
+        
     # Calculate Distance for every row
     df['distance_km'] = df.apply(lambda r: haversine(u_lat, u_lon, float(r[lat_col]), float(r[lon_col])), axis=1)
     
