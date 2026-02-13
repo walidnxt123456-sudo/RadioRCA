@@ -1,6 +1,7 @@
 import json
 import pandas as pd
 from pathlib import Path
+from infrastructure.logger import log
 
 def map_cell_to_sector_id(cell_name):
     """
@@ -17,15 +18,19 @@ def map_cell_to_sector_id(cell_name):
     
     return mapping.get(last_char, None)
 
-def get_latest_clean_file(folder_name, pattern):
+def get_latest_clean_file(folder_name, pattern, tech):
     """Finds the most recent 'clean' CSV in the specified archive folder."""
     # This matches the folder structure used in your main.py process_files logic
     path = Path(f"data/input/{folder_name}/archive")
+    log.info(f"File Path {tech}: {path}")
     if not path.exists():
+        log.debug(f"File Path {tech}: {path} not exist")
         return None
     
     # Sort by filename (timestamp) to get the newest clean file
-    files = sorted(path.glob(f"clean_*{pattern}*.csv"), reverse=True)
+    log.info(f"File pattern: clean_*{pattern}*{tech}*.csv")
+    files = sorted(path.glob(f"clean_*{pattern}*{tech}*.csv"), reverse=True)
+    log.info(f"File {tech}: {files}")
     return files[0] if files else None
     
 # Define the path for the history file
@@ -57,7 +62,7 @@ def fetch_cm_parameter(cell_name, site_id, parameter_keyword):
     2. Maps Site/Cell anchors using aliases.
     3. Returns the parameter value if found.
     """
-    cm_path = get_latest_clean_file("cm", "cm_")
+    cm_path = get_latest_clean_file("cm", "cm_","")
     if not cm_path:
         return None
 
@@ -125,7 +130,7 @@ def fetch_ericsson_e_tilt_group(site_id, cell_name):
     if not target_sector or not target_band:
         return None
 
-    cm_path = get_latest_clean_file("cm", "cm_")
+    cm_path = get_latest_clean_file("cm", "cm_","LTE")
     if not cm_path: return None
 
     try:

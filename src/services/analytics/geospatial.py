@@ -42,10 +42,12 @@ def haversine(lat1, lon1, lat2, lon2):
     
 def analyze(ctx):
     u_lat, u_lon = ctx.get('latitude'), ctx.get('longitude')
+    tech = ctx.get('technology')
     
     # Identify if we are in CLI or Web mode to handle the 'input'
     is_web = ctx.get('is_web', False)
     site_limit = ctx.get('site_limit', 1)
+    technology = ctx.get('technology', "LTE")
     
     log.info(f"Engine analyzing {site_limit} sites around ({u_lat}, {u_lon})")
     
@@ -55,7 +57,7 @@ def analyze(ctx):
         limit_input = input("🔢 Specify the number of nearest SITES to evaluate (default 1): ").strip()
         site_limit = int(limit_input) if limit_input and limit_input.isdigit() else 1
 
-    file_path = get_latest_clean_file("database", "database_")
+    file_path = get_latest_clean_file("database", "database_",tech)
     if not file_path: 
         log.error("Database file missing in 'database/' directory.")
         return print("⚠️ Clean database not found.")

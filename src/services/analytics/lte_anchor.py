@@ -3,11 +3,12 @@ import pandas as pd
 
 def analyze(ctx):
     pci = ctx.get('pci_lte')
+    tech = ctx.get('technology')
     if pci is None:
         print("❌ No LTE PCI provided for lookup.")
         return
 
-    file_path = get_latest_clean_file("cm", "cm_lte_cell")
+    file_path = get_latest_clean_file("cm", "cm_lte_cell",tech)
     if file_path:
         df = pd.read_csv(file_path)
         # Match physicalLayerCellIdGroup * 3 + physicalLayerSubCellId == pci

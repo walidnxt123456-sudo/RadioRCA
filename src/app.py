@@ -122,13 +122,14 @@ def color_status(val: str) -> str:
         return 'background-color: #fff3cd; color: #856404'  # Yellow for warning
     return ''
 
-def analyze_location(lat: float, lon: float, site_limit: int) -> dict:
+def analyze_location(lat: float, lon: float, tech: str, site_limit: int) -> dict:
     """Wrapper function for location analysis."""
-    log.debug(f"Starting RCA Engine | Lat: {lat}, Lon: {lon}, Limit: {site_limit}")
+    log.debug(f"Starting RCA Engine {tech}| Lat: {lat}, Lon: {lon}, Limit: {site_limit}")
     ctx = {
         'latitude': lat,
         'longitude': lon,
         'site_limit': site_limit,
+        'technology': tech,
         'is_web': True
     }
     results = analyze(ctx)
@@ -458,9 +459,11 @@ def main():
                     st.stop()
                 
                 # Run analysis
+                log.info(f"Run analysis {tech_choice} ")
                 results = analyze_location(
                     st.session_state.lat,
                     st.session_state.lon,
+                    tech_choice,
                     site_limit
                 )
                 

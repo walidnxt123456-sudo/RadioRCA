@@ -4,6 +4,7 @@ import pandas as pd
 def analyze(ctx):
     # 1. Performance Check
     rsrp = ctx.get('rsrp_nr')
+    tech = ctx.get('technology')
     if rsrp:
         if rsrp < -115: print("❌ NR Coverage is CRITICAL.")
         elif rsrp < -105: print("⚠️ NR Coverage is WEAK.")
@@ -11,7 +12,7 @@ def analyze(ctx):
     # 2. Configuration Lookup
     pci = ctx.get('pci_nr')
     if pci:
-        file_path = get_latest_clean_file("cm", "cm_nr_cell")
+        file_path = get_latest_clean_file("cm", "cm_nr_cell",tech)
         if file_path:
             df = pd.read_csv(file_path)
             match = df[df['nRPCI'] == pci]
